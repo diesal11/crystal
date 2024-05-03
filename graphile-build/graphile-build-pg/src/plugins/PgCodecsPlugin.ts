@@ -24,6 +24,24 @@ import type { PgAttribute, PgClass, PgType } from "pg-introspection";
 import { addBehaviorToTags, exportNameHint } from "../utils.js";
 import { version } from "../version.js";
 
+export function EXPORTABLE_OVERWRITE<T, TScope extends any[]>(
+  existing: T,
+  factory: (...args: [...TScope]) => T,
+  args: [...TScope],
+  nameHint?: string,
+) {
+  if (
+    typeof existing === "function" ||
+    (typeof existing === "object" && existing !== null)
+  ) {
+    Object.defineProperties(existing, {
+      $exporter$args: { value: args },
+      $exporter$factory: { value: factory },
+      $exporter$name: { writable: true, value: nameHint },
+    });
+  }
+}
+
 interface State {
   codecByTypeIdByDatabaseName: Map<
     string,
@@ -418,43 +436,26 @@ export const PgCodecsPlugin: GraphileConfig.Plugin = {
           const sqlIdent = info.helpers.pgBasics.identifier(nspName, className);
           exportNameHint(sqlIdent, `${codecName}Identifier`);
           exportNameHint(attributes, `${codecName}Attributes`);
-          const spec: PgRecordTypeCodecSpec<any, any> = EXPORTABLE(
-            (
-              attributes,
-              codecName,
-              description,
-              executor,
-              extensions,
-              sqlIdent,
-            ) => ({
-              name: codecName,
-              identifier: sqlIdent,
-              attributes,
-              description,
-              extensions,
-              executor,
-            }),
-            [
-              attributes,
-              codecName,
-              description,
-              executor,
-              extensions,
-              sqlIdent,
-            ],
-            `${codecName}CodecSpec`,
-          );
+
+          const spec: PgRecordTypeCodecSpec<any, any> = {
+            name: codecName,
+            identifier: sqlIdent,
+            attributes,
+            description,
+            extensions,
+            executor,
+          };
+
           await info.process("pgCodecs_recordType_spec", {
             serviceName,
             pgClass,
             spec,
           });
 
-          const codec = EXPORTABLE(
-            (recordCodec, spec) => recordCodec(spec),
-            [recordCodec, spec],
-            `${spec.name}Codec`,
-          );
+          // We mark the codec as exportable within the pgRegistry_PgRegistry hook
+          // So we can export it with it's final state
+          // eslint-disable-next-line graphile-export/export-instances
+          const codec = recordCodec(spec);
           await info.process("pgCodecs_PgCodec", {
             pgCodec: codec,
             pgType: pgClass.getType()!,
@@ -898,6 +899,65 @@ export const PgCodecsPlugin: GraphileConfig.Plugin = {
         for (const codec of codecs) {
           registryBuilder.addCodec(codec);
         }
+      },
+      pgRegistry_PgRegistry: {
+        after: ["PgPolymorphismPlugin"],
+        callback(info, event) {
+          const { registry } = event;
+          for (const [_, resource] of Object.entries(registry.pgResources)) {
+            const {
+              name,
+              sqlType,
+              attributes,
+              polymorphism,
+              description,
+              extensions,
+              isAnonymous,
+              executor,
+              refs,
+            } = resource.codec;
+
+            EXPORTABLE_OVERWRITE(
+              registry.pgCodecs[name],
+              (
+                attributes,
+                description,
+                executor,
+                extensions,
+                isAnonymous,
+                name,
+                polymorphism,
+                recordCodec,
+                refs,
+                sqlType,
+              ) =>
+                // eslint-disable-next-line graphile-export/export-instances
+                recordCodec({
+                  name,
+                  identifier: sqlType,
+                  attributes,
+                  polymorphism,
+                  description,
+                  extensions,
+                  isAnonymous,
+                  executor,
+                  refs,
+                }),
+              [
+                attributes!,
+                description,
+                executor!,
+                extensions,
+                isAnonymous,
+                name,
+                polymorphism,
+                recordCodec,
+                refs,
+                sqlType,
+              ],
+            );
+          }
+        },
       },
     },
   }),

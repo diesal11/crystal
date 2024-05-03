@@ -46,6 +46,7 @@ import type {
   PgEnumCodec,
   PgEnumValue,
 } from "./interfaces.js";
+import { PgCodecRefs } from "./index.js";
 
 // PERF: `identity` can be shortcut
 const identity = <T>(value: T): T => value;
@@ -402,6 +403,7 @@ export type PgRecordTypeCodecSpec<
   description?: string;
   extensions?: Partial<PgCodecExtensions>;
   isAnonymous?: boolean;
+  refs?: PgCodecRefs;
 };
 
 /**
@@ -437,6 +439,7 @@ export function recordCodec<
     extensions,
     isAnonymous = false,
     executor,
+    refs,
   } = config;
   return {
     name,
@@ -448,6 +451,7 @@ export function recordCodec<
     description,
     extensions,
     executor,
+    refs,
   };
 }
 exportAs("@dataplan/pg", recordCodec, "recordCodec");
